@@ -1,3 +1,4 @@
+from cProfile import label
 from locale import normalize
 import pytorch_lightning as pl
 import torch, torch.nn as nn
@@ -21,6 +22,7 @@ class UNet(pl.LightningModule):
         n_channels_out = 4
         bilinear = config['bilinear']
         tessellation=False
+        self.lr = config['lr']
 
         self.inc = DoubleConv(n_channels_in, 64)
         if tessellation:
@@ -63,35 +65,40 @@ class UNet(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         hsqc_display, hsqc_overlap1, hsqc_overlap2 = batch
         out = self(hsqc_display) * hsqc_display # only keep the value where there were dots
-        print (out.shape)
-        _, out = torch.max(out, 1)
-        print(out.shape)
+
         loss, accu = self.compute_loss_and_accu(out,  hsqc_overlap1, hsqc_overlap2)
         self.log("tr/loss", loss)
-        return loss
+        self.log("tr/accu", accu)
+        return {"loss":loss, "accu":accu}
 
     def training_epoch_end(self, train_step_outputs):
         mean_loss = sum([t["loss"].item() for t in train_step_outputs]) / len(train_step_outputs)
         self.log("tr/mean_loss", mean_loss)
+        mean_accu = sum([t["accu"] for t in train_step_outputs]) / len(train_step_outputs)
+        self.log("tr/mean_accu", mean_accu)
 
     def validation_step(self, batch, batch_idx):
-        x, labels = batch
-        out = self.forward(x)
-        loss = self.loss(out, labels)
-        metrics = self.compute_metrics(out, labels, self.ranker, loss)
-        metrics["ce_loss"]=loss.item()
+        hsqc_display, hsqc_overlap1, hsqc_overlap2 = batch
+        out = self(hsqc_display) * hsqc_display # only keep the value where there were dots
+        # out shape is torch.Size([32, 4, 180, 120])
+
+        loss, accu = self.compute_loss_and_accu(out,  hsqc_overlap1, hsqc_overlap2)
+        return {"loss":loss.item(), "accu":accu}
+        # metrics = self.compute_metrics(out, labels, self.ranker, loss)
+        # metrics["ce_loss"]=loss.item()
         # for k,v in metrics.items():
         #     self.log(k, v)
-        return metrics
+        # return metrics
     
     def test_step(self, batch, batch_idx):
-        x, labels = batch
-        out = self.forward(x)
-        loss = self.loss(out, labels)
-        metrics = self.compute_metrics(out, labels, self.ranker, loss)
-        for k,v in metrics.items():
-            self.log(k, v)
-        return metrics
+        pass
+        # x, labels = batch
+        # out = self.forward(x)
+        # loss = self.loss(out, labels)
+        # metrics = self.compute_metrics(out, labels, self.ranker, loss)
+        # for k,v in metrics.items():
+        #     self.log(k, v)
+        # return metrics
     
 
     def validation_epoch_end(self, validation_step_outputs):
@@ -137,13 +144,24 @@ class UNet(pl.LightningModule):
     #     }
     
     def compute_loss_and_accu(self, out, hsqc_overlap1, hsqc_overlap2):
-        loss1 = self.loss(out, hsqc_overlap1)
-        loss2 = self.loss(out, hsqc_overlap2)
+        # print(out.shape)
+        # print(hsqc_overlap1.shape)
+        loss1 = self.loss(out, hsqc_overlap1.squeeze(1))
+        loss2 = self.loss(out, hsqc_overlap2.squeeze(1))
+        _, prediction = torch.max(out, 1)
+        
+        
         if loss1 < loss2:
             loss = loss1 
-            non_zero = hsqc_overlap1
-            
-            accu = torch.sum( (out==hsqc_overlap1))
+            correct_positions = prediction==hsqc_overlap1
+            # correct_prediction = prediction==hsqc_overlap1
+            # accu = torch.sum( (out==hsqc_overlap1))
         else:
             loss = loss2
+            correct_positions = prediction==hsqc_overlap2
 
+        non_zeros = hsqc_overlap1!=0
+        correct_dots = correct_positions * non_zeros
+        accu = torch.sum(correct_dots).item()/ torch.sum(non_zeros).item()
+        
+        return loss , accu

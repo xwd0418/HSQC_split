@@ -3,7 +3,7 @@ import torch, pytorch_lightning as pl
 import pytorch_lightning.callbacks as cb
 from pytorch_lightning.loggers import TensorBoardLogger
 from hsqc_split_dataset import HsqcDataModule
-from HSQC_split.hsqc_split_Unet import UNet
+from hsqc_split_Unet import UNet
 
 
 
@@ -13,13 +13,13 @@ else:
         name = "none"
         
 
-f = open('/root/tessellation_project/configs/'+ name + '.json')
+f = open('/root/HSQC_split/configs/'+ name + '.json')
 config = json.load(f)
 
 save_dir = '/root/HSQC_split/exp_results'
 model = UNet(config)
 data_module = HsqcDataModule(batch_size=config['batch_size'])
-checkpoint_callback = cb.ModelCheckpoint(monitor="val/mean_ce_loss", mode="min", save_last=True)
+checkpoint_callback = cb.ModelCheckpoint(monitor="val/mean_loss", mode="min", save_last=True)
 
 
 
